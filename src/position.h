@@ -181,7 +181,6 @@ class Position {
     Bitboard   byTypeBB[PIECE_TYPE_NB];
     Bitboard   byColorBB[COLOR_NB];
     Square     kingSquare[COLOR_NB];
-    int        pieceCount[PIECE_NB];
     uint64_t   midEncoding[COLOR_NB];
     StateInfo* st;
     int        gamePly;
@@ -223,12 +222,12 @@ inline Bitboard Position::pieces(Color c, PieceTypes... pts) const {
 
 template<PieceType Pt>
 inline int Position::count(Color c) const {
-    return pieceCount[make_piece(c, Pt)];
+    return popcount(pieces(c, Pt));
 }
 
 template<PieceType Pt>
 inline int Position::count() const {
-    return count<Pt>(WHITE) + count<Pt>(BLACK);
+    return popcount(pieces(Pt));
 }
 
 inline Square Position::king_square(Color c) const { return kingSquare[c]; }
@@ -297,8 +296,6 @@ inline void Position::put_piece(Piece pc, Square s) {
     board[s] = pc;
     byTypeBB[ALL_PIECES] |= byTypeBB[type_of(pc)] |= s;
     byColorBB[color_of(pc)] |= s;
-    pieceCount[pc]++;
-    pieceCount[make_piece(color_of(pc), ALL_PIECES)]++;
     midEncoding[color_of(pc)] += Eval::NNUE::Features::HalfKAv2_hm::MidMirrorEncoding[pc][s];
 }
 
@@ -309,8 +306,6 @@ inline void Position::remove_piece(Square s) {
     byTypeBB[type_of(pc)] ^= s;
     byColorBB[color_of(pc)] ^= s;
     board[s] = NO_PIECE;
-    pieceCount[pc]--;
-    pieceCount[make_piece(color_of(pc), ALL_PIECES)]--;
     midEncoding[color_of(pc)] -= Eval::NNUE::Features::HalfKAv2_hm::MidMirrorEncoding[pc][s];
 }
 
