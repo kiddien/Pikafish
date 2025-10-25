@@ -4,30 +4,21 @@ on:
   push:
     branches:
       - jieqi
-
 jobs:
   Pikafish-x86-64:
     name: ${{ matrix.config.name }}${{ matrix.arch }}
     runs-on: ${{ matrix.config.os }}
-    timeout-minutes: 90
-
-    # Concurrency đặt trong job để dùng được matrix.*
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.config.name }}-${{ matrix.arch }}
-      cancel-in-progress: true
-
     env:
       ARCH: x86-64${{ matrix.arch }}
       COMPCXX: clang++
       COMP: clang
       EXE: pikafish${{ matrix.arch }}${{ matrix.config.ext }}
       SDE: ${{ matrix.config.sde }}
-
     strategy:
       matrix:
         config:
           - name: Linux
-            os: ubuntu-22.04
+            os: ubuntu-22.04 
             shell: bash
             sde: /home/runner/work/Pikafish/Pikafish/.output/sde-temp-files/sde-external-9.33.0-2024-01-07-lin/sde -future --
           - name: Windows
@@ -35,8 +26,7 @@ jobs:
             shell: msys2 {0}
             ext: .exe
             sde: /d/a/Pikafish/Pikafish/.output/sde-temp-files/sde-external-9.33.0-2024-01-07-win/sde.exe -future --
-        arch: ["-vnni512", "-bw512", "-avx512", "-avxvnni", "-bmi2", "-avx2", "-sse41-popcnt"]
-
+        arch: ["-avx512", "-avx2", "-sse41-popcnt"]
     defaults:
       run:
         working-directory: src
@@ -45,8 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM and Clang (Linux)
-        if: ${{ runner.os == 'Linux' }}
+      - name: Install LLVM and Clang
+        if: runner.os == 'Linux'
         run: |
           wget https://apt.llvm.org/llvm.sh
           chmod u+x llvm.sh
@@ -57,60 +47,28 @@ jobs:
           sudo update-alternatives --set clang++ /usr/bin/clang++-20
           sudo update-alternatives --set llvm-profdata /usr/bin/llvm-profdata-20
 
-      - name: Setup msys and install required packages (Windows)
-        if: ${{ runner.os == 'Windows' }}
+      - name: Setup msys and install required packages
+        if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: clang64
-          update: false
-          install: >
-            mingw-w64-clang-x86_64-clang
-            mingw-w64-clang-x86_64-llvm
-            make
-            git
-            expect
+          install: mingw-w64-clang-x86_64-clang make git expect
 
-      - name: Download SDE package (only for non-AVX2/-BMI2/-SSE41-popcnt)
-        if: ${{ !(matrix.arch == '-bmi2' || matrix.arch == '-avx2' || matrix.arch == '-sse41-popcnt') }}
+      - name: Download SDE package
+        if: "!(matrix.arch == '-bmi2' || matrix.arch == '-avx2' || matrix.arch == '-sse41-popcnt')"
         uses: petarpetrovt/setup-sde@v2.4
         with:
           environmentVariableName: SDE_DIR
           sdeVersion: 9.33.0
 
-      - name: Compile ${{ matrix.arch }} build (PGO)
+      - name: Compile ${{ matrix.arch }} build
         run: |
-          set -o pipefail
-
-          # Arch chạy native thì không cần SDE prefix
           if [[ "${{ matrix.arch }}" == "-bmi2" || "${{ matrix.arch }}" == "-avx2" || "${{ matrix.arch }}" == "-sse41-popcnt" ]]; then
             SDE=""
-          else
-            SDE="${{ env.SDE }}"
           fi
-
-          # Thiết lập môi trường ngay trong bước compile
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export MSYS2_ARG_CONV_EXCL='*'
-            export LLVM_PROFILE_FILE="$PWD/clang-%p.profraw"
-            JOBS=2
-            # Bỏ -static để giảm tải liên kết và tránh cygheap/fork error
-            make -j${JOBS} -e LDFLAGS="" profile-build EXE=$EXE WINE_PATH="$SDE"
-          else
-            export LLVM_PROFILE_FILE="${LLVM_PROFILE_FILE:-$PWD/clang-%p.profraw}"
-            JOBS=$(nproc || echo 4)
-            make -j${JOBS} profile-build EXE=$EXE WINE_PATH="$SDE"
-          fi
-
+          make -j profile-build EXE=$EXE WINE_PATH="$SDE"
           make strip EXE=$EXE
           cp $EXE ../
-
-      - name: Show PGOBENCH (if exists & for debugging)
-        if: ${{ always() }}
-        run: |
-          if [[ -f PGOBENCH.out ]]; then
-            echo "==== PGOBENCH.out (tail) ===="
-            tail -n 200 PGOBENCH.out || true
-          fi
 
       - name: Download wiki
         run: |
@@ -118,107 +76,14 @@ jobs:
           cd ../Wiki
           rm -rf .git
 
+      # Artifacts automatically get zipped.
+      # To avoid double-zipping, we use the unzipped directory
       - uses: actions/upload-artifact@v4
-        with:
+        with:	
           name: Pikafish-${{ matrix.config.name }}${{ matrix.arch }}
           path: |
             ${{ env.EXE }}
             Wiki
-            AUTHORS
-            CONTRIBUTING.md
-            Copying.txt
-            README.md
-            Top CPU Contributors.txt
-
-  Pikafish-MacOS:
-    name: MacOS-apple-silicon
-    runs-on: macos-latest
-    timeout-minutes: 60
-    env:
-      ARCH: apple-silicon
-      COMPCXX: clang++
-      COMP: clang
-      EXE: pikafish-apple-silicon
-    defaults:
-      run:
-        working-directory: src
-        shell: bash
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Compile apple-silicon build
-        run: |
-          make -j profile-build EXE=$EXE
-          make strip EXE=$EXE
-          cp $EXE ../
-
-      - name: Download wiki
-        run: |
-          git clone https://github.com/official-pikafish/Pikafish.wiki.git ../Wiki
-          cd ../Wiki
-          rm -rf .git
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Pikafish-MacOS-apple-silicon
-          path: |
-            ${{ env.EXE }}
-            Wiki
-            AUTHORS
-            CONTRIBUTING.md
-            Copying.txt
-            README.md
-            Top CPU Contributors.txt
-
-  Pikafish-Android:
-    name: Android-${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      ARCH: ${{ matrix.arch }}
-      COMPCXX: aarch64-linux-android29-clang++
-      COMP: ndk
-      EXE: pikafish-${{ matrix.arch }}
-      LDFLAGS: "-static -Wno-unused-command-line-argument"
-    strategy:
-      matrix:
-        arch: ["armv8-dotprod", "armv8"]
-    defaults:
-      run:
-        working-directory: src
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download required linux packages
-        run: |
-          sudo apt update
-          sudo apt install -y qemu-user
-
-      - name: Install NDK
-        run: |
-          NDKV="27.2.12479018"
-          ANDROID_ROOT=/usr/local/lib/android
-          ANDROID_SDK_ROOT=$ANDROID_ROOT/sdk
-          SDKMANAGER=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager
-          echo "y" | $SDKMANAGER "ndk;$NDKV"
-          ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDKV
-          ANDROID_NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
-          echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> $GITHUB_ENV
-
-      - name: Compile ${{ matrix.arch }} build
-        run: |
-          export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
-          make -j profile-build EXE=$EXE WINE_PATH=$EMU
-          make strip EXE=$EXE
-          cp $EXE ../
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Pikafish-Android-${{ matrix.arch }}
-          path: |
-            ${{ env.EXE }}
             AUTHORS
             CONTRIBUTING.md
             Copying.txt
