@@ -60,14 +60,6 @@ jobs:
             git
             expect
 
-      - name: Windows PGO env (ensure profraw path & stable args)
-        if: runner.os == 'Windows'
-        run: |
-          export MSYS2_ARG_CONV_EXCL='*'
-          export LLVM_PROFILE_FILE="$PWD/clang-%p.profraw"
-          echo "MSYS2_ARG_CONV_EXCL=$MSYS2_ARG_CONV_EXCL" >> $GITHUB_ENV
-          echo "LLVM_PROFILE_FILE=$LLVM_PROFILE_FILE" >> $GITHUB_ENV
-
       - name: Download SDE package (only for non-AVX2/-BMI2/-SSE41-popcnt)
         if: "!(matrix.arch == '-bmi2' || matrix.arch == '-avx2' || matrix.arch == '-sse41-popcnt')"
         uses: petarpetrovt/setup-sde@v2.4
@@ -77,20 +69,22 @@ jobs:
 
       - name: Compile ${{ matrix.arch }} build (PGO)
         run: |
-          # Với các arch chạy native (không cần SDE), để trống prefix
+          set -o pipefail
+
+          # Arch chạy native thì không cần SDE prefix
           if [[ "${{ matrix.arch }}" == "-bmi2" || "${{ matrix.arch }}" == "-avx2" || "${{ matrix.arch }}" == "-sse41-popcnt" ]]; then
             SDE=""
           fi
 
-          set -o pipefail
-          export LLVM_PROFILE_FILE="${LLVM_PROFILE_FILE:-$PWD/clang-%p.profraw}"
-
-          # Giới hạn parallel trên Windows để tránh lỗi fork/cygheap
+          # Thiết lập môi trường NHẤT QUÁN ngay trong bước compile
           if [[ "$RUNNER_OS" == "Windows" ]]; then
+            export MSYS2_ARG_CONV_EXCL='*'
+            export LLVM_PROFILE_FILE="$PWD/clang-%p.profraw"
             JOBS=2
-            # Giảm tải liên kết: bỏ -static bằng cách override LDFLAGS rỗng
+            # Bỏ -static cho Windows để giảm gánh liên kết và tránh lỗi fork/cygheap
             make -j${JOBS} -e LDFLAGS="" profile-build EXE=$EXE WINE_PATH="$SDE"
           else
+            export LLVM_PROFILE_FILE="${LLVM_PROFILE_FILE:-$PWD/clang-%p.profraw}"
             JOBS=$(nproc || echo 4)
             make -j${JOBS} profile-build EXE=$EXE WINE_PATH="$SDE"
           fi
