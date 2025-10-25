@@ -5,10 +5,17 @@ on:
     branches:
       - jieqi
 
+# Ngăn hủy run một cách “vô tình”.
+# Nhóm theo workflow + ref + matrix job; chỉ hủy run cũ của CÙNG job khi có run mới hơn.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.config.name }}-${{ matrix.arch }}
+  cancel-in-progress: true
+
 jobs:
   Pikafish-x86-64:
     name: ${{ matrix.config.name }}${{ matrix.arch }}
     runs-on: ${{ matrix.config.os }}
+    timeout-minutes: 90
     env:
       ARCH: x86-64${{ matrix.arch }}
       COMPCXX: clang++
@@ -53,6 +60,8 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: clang64
+          # Không update toàn hệ để tiết kiệm thời gian; đã có cache của action
+          update: false
           install: >
             mingw-w64-clang-x86_64-clang
             mingw-w64-clang-x86_64-llvm
@@ -121,6 +130,7 @@ jobs:
   Pikafish-MacOS:
     name: MacOS-apple-silicon
     runs-on: macos-latest
+    timeout-minutes: 60
     env:
       ARCH: apple-silicon
       COMPCXX: clang++
@@ -161,6 +171,7 @@ jobs:
   Pikafish-Android:
     name: Android-${{ matrix.arch }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       ARCH: ${{ matrix.arch }}
       COMPCXX: aarch64-linux-android29-clang++
