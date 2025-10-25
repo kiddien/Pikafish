@@ -19,7 +19,7 @@ jobs:
       matrix:
         config:
           - name: Linux
-            os: ubuntu-22.04 
+            os: ubuntu-22.04
             shell: bash
             sde: /home/runner/work/Pikafish/Pikafish/.output/sde-temp-files/sde-external-9.33.0-2024-01-07-lin/sde -future --
           - name: Windows
@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM and Clang
+      - name: Install LLVM and Clang (Linux)
         if: runner.os == 'Linux'
         run: |
           wget https://apt.llvm.org/llvm.sh
@@ -48,28 +48,60 @@ jobs:
           sudo update-alternatives --set clang++ /usr/bin/clang++-20
           sudo update-alternatives --set llvm-profdata /usr/bin/llvm-profdata-20
 
-      - name: Setup msys and install required packages
+      - name: Setup msys and install required packages (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: clang64
-          install: mingw-w64-clang-x86_64-clang make git expect
+          install: >
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-llvm
+            make
+            git
+            expect
 
-      - name: Download SDE package
+      - name: Windows PGO env (ensure profraw path & stable args)
+        if: runner.os == 'Windows'
+        run: |
+          # Không cho MSYS2 tự ý chuyển đổi đối số/đường dẫn
+          export MSYS2_ARG_CONV_EXCL='*'
+          # Đảm bảo file profile được ghi đúng chỗ, mỗi PID một file
+          export LLVM_PROFILE_FILE="$PWD/clang-%p.profraw"
+          echo "MSYS2_ARG_CONV_EXCL=$MSYS2_ARG_CONV_EXCL" >> $GITHUB_ENV
+          echo "LLVM_PROFILE_FILE=$LLVM_PROFILE_FILE" >> $GITHUB_ENV
+
+      - name: Download SDE package (only for non-AVX2/-BMI2/-SSE41-popcnt)
         if: "!(matrix.arch == '-bmi2' || matrix.arch == '-avx2' || matrix.arch == '-sse41-popcnt')"
         uses: petarpetrovt/setup-sde@v2.4
         with:
           environmentVariableName: SDE_DIR
           sdeVersion: 9.33.0
 
-      - name: Compile ${{ matrix.arch }} build
+      - name: Compile ${{ matrix.arch }} build (PGO)
         run: |
+          # Với các arch chạy native (không cần SDE), để trống prefix
           if [[ "${{ matrix.arch }}" == "-bmi2" || "${{ matrix.arch }}" == "-avx2" || "${{ matrix.arch }}" == "-sse41-popcnt" ]]; then
             SDE=""
           fi
+
+          # Bật pipefail để lộ lỗi thực thi trong PGO (nếu có)
+          set -o pipefail
+
+          # Đảm bảo biến profile của LLVM tồn tại khi chạy PGO (Windows/Linux đều đọc từ ENV)
+          export LLVM_PROFILE_FILE="${LLVM_PROFILE_FILE:-$PWD/clang-%p.profraw}"
+
+          # Build PGO: sẽ build bản instrumented, chạy benchmark (tạo *.profraw), rồi merge
           make -j profile-build EXE=$EXE WINE_PATH="$SDE"
           make strip EXE=$EXE
           cp $EXE ../
+
+      - name: Show PGOBENCH (if exists & for debugging)
+        if: always()
+        run: |
+          if [[ -f PGOBENCH.out ]]; then
+            echo "==== PGOBENCH.out (tail) ===="
+            tail -n 200 PGOBENCH.out || true
+          fi
 
       - name: Download wiki
         run: |
@@ -77,10 +109,8 @@ jobs:
           cd ../Wiki
           rm -rf .git
 
-      # Artifacts automatically get zipped.
-      # To avoid double-zipping, we use the unzipped directory
       - uses: actions/upload-artifact@v4
-        with:	
+        with:
           name: Pikafish-${{ matrix.config.name }}${{ matrix.arch }}
           path: |
             ${{ env.EXE }}
@@ -119,8 +149,6 @@ jobs:
           cd ../Wiki
           rm -rf .git
 
-      # Artifacts automatically get zipped.
-      # To avoid double-zipping, we use the unzipped directory
       - uses: actions/upload-artifact@v4
         with:
           name: Pikafish-MacOS-apple-silicon
@@ -155,7 +183,7 @@ jobs:
       - name: Download required linux packages
         run: |
           sudo apt update
-          sudo apt install qemu-user
+          sudo apt install -y qemu-user
 
       - name: Install NDK
         run: |
@@ -175,10 +203,8 @@ jobs:
           make strip EXE=$EXE
           cp $EXE ../
 
-      # Artifacts automatically get zipped.
-      # To avoid double-zipping, we use the unzipped directory
       - uses: actions/upload-artifact@v4
-        with:	
+        with:
           name: Pikafish-Android-${{ matrix.arch }}
           path: |
             ${{ env.EXE }}
