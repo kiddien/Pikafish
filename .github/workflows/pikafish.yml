@@ -5,23 +5,24 @@ on:
     branches:
       - jieqi
 
-# Ngăn hủy run một cách “vô tình”.
-# Nhóm theo workflow + ref + matrix job; chỉ hủy run cũ của CÙNG job khi có run mới hơn.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.config.name }}-${{ matrix.arch }}
-  cancel-in-progress: true
-
 jobs:
   Pikafish-x86-64:
     name: ${{ matrix.config.name }}${{ matrix.arch }}
     runs-on: ${{ matrix.config.os }}
     timeout-minutes: 90
+
+    # Concurrency đặt trong job để dùng được matrix.*
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.config.name }}-${{ matrix.arch }}
+      cancel-in-progress: true
+
     env:
       ARCH: x86-64${{ matrix.arch }}
       COMPCXX: clang++
       COMP: clang
       EXE: pikafish${{ matrix.arch }}${{ matrix.config.ext }}
       SDE: ${{ matrix.config.sde }}
+
     strategy:
       matrix:
         config:
@@ -35,6 +36,7 @@ jobs:
             ext: .exe
             sde: /d/a/Pikafish/Pikafish/.output/sde-temp-files/sde-external-9.33.0-2024-01-07-win/sde.exe -future --
         arch: ["-vnni512", "-bw512", "-avx512", "-avxvnni", "-bmi2", "-avx2", "-sse41-popcnt"]
+
     defaults:
       run:
         working-directory: src
@@ -44,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install LLVM and Clang (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' }}
         run: |
           wget https://apt.llvm.org/llvm.sh
           chmod u+x llvm.sh
@@ -56,11 +58,10 @@ jobs:
           sudo update-alternatives --set llvm-profdata /usr/bin/llvm-profdata-20
 
       - name: Setup msys and install required packages (Windows)
-        if: runner.os == 'Windows'
+        if: ${{ runner.os == 'Windows' }}
         uses: msys2/setup-msys2@v2
         with:
           msystem: clang64
-          # Không update toàn hệ để tiết kiệm thời gian; đã có cache của action
           update: false
           install: >
             mingw-w64-clang-x86_64-clang
@@ -70,7 +71,7 @@ jobs:
             expect
 
       - name: Download SDE package (only for non-AVX2/-BMI2/-SSE41-popcnt)
-        if: "!(matrix.arch == '-bmi2' || matrix.arch == '-avx2' || matrix.arch == '-sse41-popcnt')"
+        if: ${{ !(matrix.arch == '-bmi2' || matrix.arch == '-avx2' || matrix.arch == '-sse41-popcnt') }}
         uses: petarpetrovt/setup-sde@v2.4
         with:
           environmentVariableName: SDE_DIR
@@ -83,14 +84,16 @@ jobs:
           # Arch chạy native thì không cần SDE prefix
           if [[ "${{ matrix.arch }}" == "-bmi2" || "${{ matrix.arch }}" == "-avx2" || "${{ matrix.arch }}" == "-sse41-popcnt" ]]; then
             SDE=""
+          else
+            SDE="${{ env.SDE }}"
           fi
 
-          # Thiết lập môi trường NHẤT QUÁN ngay trong bước compile
+          # Thiết lập môi trường ngay trong bước compile
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             export MSYS2_ARG_CONV_EXCL='*'
             export LLVM_PROFILE_FILE="$PWD/clang-%p.profraw"
             JOBS=2
-            # Bỏ -static cho Windows để giảm gánh liên kết và tránh lỗi fork/cygheap
+            # Bỏ -static để giảm tải liên kết và tránh cygheap/fork error
             make -j${JOBS} -e LDFLAGS="" profile-build EXE=$EXE WINE_PATH="$SDE"
           else
             export LLVM_PROFILE_FILE="${LLVM_PROFILE_FILE:-$PWD/clang-%p.profraw}"
@@ -102,7 +105,7 @@ jobs:
           cp $EXE ../
 
       - name: Show PGOBENCH (if exists & for debugging)
-        if: always()
+        if: ${{ always() }}
         run: |
           if [[ -f PGOBENCH.out ]]; then
             echo "==== PGOBENCH.out (tail) ===="
